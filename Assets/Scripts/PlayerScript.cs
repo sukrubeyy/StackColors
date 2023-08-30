@@ -1,63 +1,57 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
-using System;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 public class PlayerScript : MonoBehaviour
 {
     [SerializeField] Renderer[] myrenderer;
     [SerializeField] Color myColor;
-    [SerializeField] float mySpeed;
+    [SerializeField] float forwardSpeed;
     [SerializeField] bool isPlaying;
     Rigidbody rb;
     [SerializeField] float xSpeed;
     [SerializeField] Transform stackPosition;
     Transform parentPickUp;
+    public Queue<Transform> allStackObjects;
 
-    bool atEnd;
+    bool isGameStart;
     [SerializeField] float forwardForce;
-    [SerializeField] float forceAdder;
-    [SerializeField] float forceReducer;
-    public static Action<float> kick;
+    [SerializeField] float upForce;
+    private bool isFinish;
+    public Status status = Status.None;
+    public GameObject canvasObj;
+    public Button retryButton;
 
-
-   
     private void Start()
     {
+        retryButton.onClick.AddListener(() => { SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex); });
         rb = GetComponent<Rigidbody>();
         SetColor(myColor);
+        allStackObjects = new Queue<Transform>();
     }
+
     private void Update()
     {
-        if(isPlaying)
+        if (isPlaying && status is Status.PlayMode)
         {
             moveForward();
         }
-       
 
-        if(atEnd)
+
+        if (Input.GetMouseButton(0) && !isGameStart)
         {
-            forwardForce -= forceReducer * Time.deltaTime;
-            if (forwardForce < 0)
-                forwardForce = 0;
-        }
-
-        if(Input.GetMouseButtonDown(0) && atEnd)
-        {
-            forwardForce += forceAdder;
-        }
-
-
-
-        if (Input.GetMouseButton(0) && !atEnd)
-        {
-            if (!isPlaying)
+            if (!isPlaying && !isFinish)
             {
                 isPlaying = true;
+                status = Status.PlayMode;
             }
-            MoveSideways();
+
+            if (status is Status.PlayMode)
+                MoveSideways();
         }
     }
+
     public void SetColor(Color color)
     {
         myColor = color;
@@ -66,55 +60,75 @@ public class PlayerScript : MonoBehaviour
             myrenderer[i].material.SetColor("_Color", myColor);
         }
     }
+
     public void MoveSideways()
     {
         Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
         RaycastHit hit;
-        if(Physics.Raycast(ray,out hit,100))
+        if (Physics.Raycast(ray, out hit, 100))
         {
             transform.position = Vector3.Lerp(transform.position, new Vector3(hit.point.x, transform.position.y, transform.position.z), xSpeed * Time.deltaTime);
         }
     }
+
     public void moveForward()
     {
-        rb.velocity = Vector3.forward * mySpeed;
+        rb.velocity = Vector3.forward * forwardSpeed;
     }
-    private void OnTriggerEnter(Collider other)
+
+    private void OnCollisionEnter(Collision collision)
     {
-        if(other.tag=="FinishLineEnd")
+        if (collision.gameObject.CompareTag("FinishLineEnd"))
         {
             rb.velocity = Vector3.zero;
             isPlaying = false;
-            LaunchStack();
+            isFinish = true;
+            ForceChildStacks();
+            status = Status.UIMode;
+            canvasObj.SetActive(true);
+            Camera.main.GetComponent<CameraFollower>().SetTarget(allStackObjects.Dequeue());
         }
+    }
 
-        if(other.tag=="FinishLineStart")
+    private void ForceChildStacks()
+    {
+        upForce = allStackObjects.Count * 2;
+        forwardForce = allStackObjects.Count * 5;
+        foreach (var stack in allStackObjects)
         {
-            atEnd = true;
+            stack.parent = null;
+            Rigidbody rbStack = stack.GetComponent<Rigidbody>();
+            stack.GetComponent<BoxCollider>().enabled = true;
+            rbStack.isKinematic = false;
+            rbStack.AddForce(new Vector3(0, upForce, forwardForce), ForceMode.Impulse);
+            upForce -= 2;
+            forwardForce -= 5;
         }
+    }
 
-        if (atEnd)
-            return;
-
-        if(other.tag=="PickUp")
+    private void OnTriggerEnter(Collider other)
+    {
+        if (other.tag == "PickUp")
         {
             //Temas ettiğimiz objenin transformunu alıyoruz
             Transform otherTransform = other.transform;
+            allStackObjects.Enqueue(otherTransform);
             if (myColor != other.GetComponent<PickUp>().GetColor())
             {
-                Destroy(other.gameObject);
+                //Destroy(other.gameObject);
                 if (parentPickUp != null)
                 {
                     if (parentPickUp.childCount >= 1)
                     {
                         parentPickUp.position -= Vector3.up * parentPickUp.GetChild(parentPickUp.childCount - 1).localScale.y;
-                        Destroy(parentPickUp.GetChild(parentPickUp.childCount - 1).gameObject);
+                        //Destroy(parentPickUp.GetChild(parentPickUp.childCount - 1).gameObject);
                     }
                     else
                     {
-                        Destroy(parentPickUp.gameObject);
+                        //Destroy(parentPickUp.gameObject);
                     }
                 }
+
                 return;
             }
 
@@ -122,13 +136,13 @@ public class PlayerScript : MonoBehaviour
             //temas ettiğimiz objenin rigidbody'sini alıyoruz
             Rigidbody otherRb = otherTransform.GetComponent<Rigidbody>();
 
-          
+
             //fizik olaylarından muaf olmasını sağlarız
             otherRb.isKinematic = true;
             //etkileşim ettiğimiz objeyi pasif hale getiririz
             other.enabled = false;
 
-            if(parentPickUp==null)
+            if (parentPickUp == null)
             {
                 //parentPickUp objemiz sürekli değişecek bu yüzden etkileşime geçtiğimiz kutunun transformunu pickUp transformuna
                 //atıyoruz
@@ -140,7 +154,6 @@ public class PlayerScript : MonoBehaviour
             }
             else
             {
-                
                 parentPickUp.position += Vector3.up * (otherTransform.localScale.y);
                 //Hali hazırda veya önceden aldığın pickUp objesi var ise bu objenin transformunu stackposition'a eşitleyelim
                 otherTransform.position = stackPosition.position;
@@ -151,17 +164,20 @@ public class PlayerScript : MonoBehaviour
         }
     }
 
-    private void LaunchStack()
-    {
-        Camera.main.GetComponent<CameraFollower>().SetTarget(parentPickUp);
-        kick(forwardForce);
-    }
 
     private void OnTriggerExit(Collider other)
     {
-        if(other.tag=="ColorWall")
+        if (other.tag == "ColorWall")
         {
             SetColor(other.GetComponent<ColorWall>().getColor());
         }
     }
+}
+
+
+public enum Status
+{
+    None,
+    PlayMode,
+    UIMode,
 }
